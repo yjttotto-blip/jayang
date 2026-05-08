@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>33평 아파트 3D 뷰어</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+    color: #fff;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.45);
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    pointer-events: none;
+    z-index: 10;
+    max-width: 220px;
+  }
+  #hud b { color: #ffcd6e; }
+
+  #room-label {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    padding: 8px 14px;
+    background: rgba(0,0,0,0.45);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  #start-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    cursor: pointer;
+  }
+  #start-overlay .panel {
+    background: rgba(20,20,28,0.92);
+    padding: 28px 32px;
+    border-radius: 14px;
+    text-align: center;
+    max-width: 320px;
+  }
+  #start-overlay h1 { margin: 0 0 10px; font-size: 20px; }
+  #start-overlay p { margin: 4px 0; font-size: 13px; opacity: 0.85; }
+  #start-overlay .btn {
+    margin-top: 14px;
+    padding: 10px 22px;
+    background: #ffcd6e;
+    color: #222;
+    border-radius: 8px;
+    font-weight: 700;
+    display: inline-block;
+  }
+
+  /* Joystick */
+  #joystick {
+    position: fixed;
+    left: 24px;
+    bottom: 24px;
+    width: 130px;
+    height: 130px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+    border: 2px solid rgba(255,255,255,0.3);
+    z-index: 15;
+    display: none;
+    touch-action: none;
+  }
+  #joystick.visible { display: block; }
+  #joystick .stick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 56px;
+    height: 56px;
+    margin: -28px 0 0 -28px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.55);
+    box-shadow: 0 0 12px rgba(0,0,0,0.4);
+    pointer-events: none;
+  }
+
+  #look-pad {
+    position: fixed;
+    right: 0;
+    top: 0;
+    width: 50%;
+    height: 100%;
+    z-index: 12;
+    display: none;
+    touch-action: none;
+  }
+  #look-pad.visible { display: block; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <b>조작</b><br/>
+  PC: 마우스로 둘러보기 / WASD 이동<br/>
+  모바일: 좌측 조이스틱 이동 / 우측 화면 드래그로 시점
+</div>
+<div id="room-label">현관</div>
+
+<div id="start-overlay">
+  <div class="panel">
+    <h1>33평 아파트 3D 뷰어</h1>
+    <p>거실 · 주방/식당 · 침실3 · 화장실2</p>
+    <p style="margin-top:10px;font-size:12px;opacity:0.7;">PC는 화면 클릭 시 마우스 시점 잠금</p>
+    <div class="btn">탭하여 시작</div>
+  </div>
+</div>
+
+<div id="joystick"><div class="stick"></div></div>
+<div id="look-pad"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ----------------------------------------------------------------------------
+// Constants
+// ----------------------------------------------------------------------------
+const UNIT_W = 11.9;   // x
+const UNIT_D = 8.7;    // z
+const WALL_H = 2.7;
+const WALL_T = 0.12;
+const EYE_H  = 1.6;
+
+// Use a coordinate system where (0,0) is the NW corner of the apartment.
+// Internally Three.js uses centered world; we offset on creation.
+const OX = -UNIT_W / 2;
+const OZ = -UNIT_D / 2;
+// Floor plan is mirrored left-right vs the real apartment, so flip X.
+const px = (x) => OX + (UNIT_W - x);
+const pz = (z) => OZ + z;
+
+// ----------------------------------------------------------------------------
+// Renderer / Scene / Camera
+// ----------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeaf2fb);
+scene.fog = new THREE.Fog(0xeaf2fb, 18, 60);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.05, 200);
+camera.position.set(px(6.3), EYE_H, pz(2.4)); // start at entrance
+
+// Yaw / pitch container (FPS rig)
+const yawObject = new THREE.Object3D();
+const pitchObject = new THREE.Object3D();
+yawObject.add(pitchObject);
+pitchObject.add(camera);
+camera.position.set(0,0,0);
+yawObject.position.set(px(6.3), EYE_H, pz(2.4));
+yawObject.rotation.y = Math.PI; // face into apartment
+scene.add(yawObject);
+
+// ----------------------------------------------------------------------------
+// Lighting
+// ----------------------------------------------------------------------------
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb6c4d4, 0.55));
+
+const sun = new THREE.DirectionalLight(0xfff1d6, 0.9);
+sun.position.set(8, 14, -10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 60;
+sun.shadow.camera.left = -20;
+sun.shadow.camera.right = 20;
+sun.shadow.camera.top = 20;
+sun.shadow.camera.bottom = -20;
+scene.add(sun);
+
+// soft room lights
+function addCeilingLight(x, z, intensity=0.4) {
+  const l = new THREE.PointLight(0xffe8c2, intensity, 8, 1.6);
+  l.position.set(px(x), WALL_H - 0.15, pz(z));
+  scene.add(l);
+}
+addCeilingLight(3.5, 2.0, 0.6);   // living
+addCeilingLight(8.0, 5.0, 0.5);   // kitchen/dining
+addCeilingLight(3.5, 6.5, 0.4);   // master
+addCeilingLight(8.8, 1.5, 0.35);  // top bedroom
+addCeilingLight(9.0, 7.5, 0.35);  // bottom-right bedroom
+
+// ----------------------------------------------------------------------------
+// Procedural textures
+// ----------------------------------------------------------------------------
+function makeOakTexture(repeatX = 6, repeatY = 6) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const ctx = c.getContext('2d');
+  // base
+  ctx.fillStyle = '#b88550';
+  ctx.fillRect(0,0,512,512);
+  // planks (vertical)
+  const plankW = 64;
+  for (let i = 0; i < 512; i += plankW) {
+    const shade = 70 + Math.random()*40;
+    ctx.fillStyle = `rgb(${130+shade*0.5},${85+shade*0.4},${50+shade*0.3})`;
+    ctx.fillRect(i, 0, plankW, 512);
+    // grain lines
+    for (let g = 0; g < 30; g++) {
+      ctx.strokeStyle = `rgba(70,40,20,${0.05 + Math.random()*0.18})`;
+      ctx.lineWidth = 0.5 + Math.random();
+      ctx.beginPath();
+      const y0 = Math.random()*512;
+      ctx.moveTo(i + 2, y0);
+      ctx.bezierCurveTo(
+        i + plankW*0.3, y0 + (Math.random()-0.5)*30,
+        i + plankW*0.7, y0 + (Math.random()-0.5)*30,
+        i + plankW - 2, y0 + (Math.random()-0.5)*20
+      );
+      ctx.stroke();
+    }
+    // knots
+    if (Math.random() < 0.4) {
+      const ky = Math.random()*512;
+      const kr = 3 + Math.random()*5;
+      const grad = ctx.createRadialGradient(i+plankW/2, ky, 0, i+plankW/2, ky, kr*2);
+      grad.addColorStop(0, 'rgba(60,30,10,0.7)');
+      grad.addColorStop(1, 'rgba(60,30,10,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(i+plankW/2, ky, kr*2, 0, Math.PI*2); ctx.fill();
+    }
+    // plank seam
+    ctx.strokeStyle = 'rgba(40,25,15,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+    // horizontal seams between plank segments
+    const segs = 2 + Math.floor(Math.random()*2);
+    for (let s = 1; s < segs; s++) {
+      const y = (s/segs)*512 + (Math.random()-0.5)*40;
+      ctx.beginPath(); ctx.moveTo(i, y); ctx.lineTo(i+plankW, y); ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeatX, repeatY);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function makeTileTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#dfe3e6'; ctx.fillRect(0,0,256,256);
+  for (let y = 0; y < 256; y += 64) {
+    for (let x = 0; x < 256; x += 64) {
+      const v = 220 + Math.random()*30;
+      ctx.fillStyle = `rgb(${v},${v},${v-5})`;
+      ctx.fillRect(x+2, y+2, 60, 60);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4,4);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeWallTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fafafa'; ctx.fillRect(0,0,256,256);
+  for (let i=0; i<8000; i++) {
+    ctx.fillStyle = `rgba(0,0,0,${Math.random()*0.03})`;
+    ctx.fillRect(Math.random()*256, Math.random()*256, 1, 1);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3,2);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const oakTex = makeOakTexture(8,8);
+const tileTex = makeTileTexture();
+const wallTex = makeWallTexture();
+
+// ----------------------------------------------------------------------------
+// Materials
+// ----------------------------------------------------------------------------
+const matOak    = new THREE.MeshStandardMaterial({ map: oakTex, roughness: 0.7, metalness: 0.0 });
+const matTile   = new THREE.MeshStandardMaterial({ map: tileTex, roughness: 0.4 });
+const matWall   = new THREE.MeshStandardMaterial({ map: wallTex, color: 0xffffff, roughness: 0.9 });
+const matCeil   = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
+const matBalcon = new THREE.MeshStandardMaterial({ color: 0xece5d0, roughness: 0.8 });
+
+// ----------------------------------------------------------------------------
+// Floor + Ceiling
+// ----------------------------------------------------------------------------
+// Main wood floor for whole interior (rooms with tile will overlay)
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(UNIT_W, UNIT_D),
+  matOak
+);
+floor.rotation.x = -Math.PI/2;
+floor.position.set(0, 0, 0);
+floor.receiveShadow = true;
+scene.add(floor);
+
+// Ceiling
+const ceiling = new THREE.Mesh(
+  new THREE.PlaneGeometry(UNIT_W, UNIT_D),
+  matCeil
+);
+ceiling.rotation.x = Math.PI/2;
+ceiling.position.set(0, WALL_H, 0);
+scene.add(ceiling);
+
+// Bathroom tile overlays + balcony tile overlays
+function addTileFloor(x, z, w, d, mat = matTile) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+  m.rotation.x = -Math.PI/2;
+  m.position.set(px(x + w/2), 0.005, pz(z + d/2));
+  m.receiveShadow = true;
+  scene.add(m);
+}
+// bathroom 1 (top middle)
+addTileFloor(5.4, 0.0, 1.5, 1.5);
+// bathroom 2 (bottom middle)
+addTileFloor(5.4, 5.4, 2.4, 3.3);
+// entrance porch
+addTileFloor(5.4, 1.5, 1.5, 1.5);
+// balconies
+addTileFloor(0.0, 0.0, 1.5, UNIT_D, matBalcon);    // left full balcony
+addTileFloor(10.2, 0.0, 1.7, 2.7, matBalcon);      // top-right balcony
+addTileFloor(11.1, 5.4, 0.8, 3.3, matBalcon);      // bottom-right balcony
+
+// ----------------------------------------------------------------------------
+// Walls
+// ----------------------------------------------------------------------------
+const wallSegments = []; // for collision
+
+// Adds a wall as a thin box from (x1,z1) to (x2,z2) (axis-aligned).
+function addWall(x1, z1, x2, z2, h = WALL_H, t = WALL_T, mat = matWall) {
+  const dx = x2 - x1, dz = z2 - z1;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.001) return;
+  const cx = (x1 + x2)/2;
+  const cz = (z1 + z2)/2;
+  // Only axis-aligned walls expected
+  let w, d;
+  if (Math.abs(dx) > Math.abs(dz)) { w = len; d = t; }
+  else { w = t; d = len; }
+  const geom = new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(geom, mat);
+  m.position.set(px(cx), h/2, pz(cz));
+  m.castShadow = true;
+  m.receiveShadow = true;
+  scene.add(m);
+  // collision AABB with small inflation
+  wallSegments.push({
+    minX: m.position.x - w/2,
+    maxX: m.position.x + w/2,
+    minZ: m.position.z - d/2,
+    maxZ: m.position.z + d/2,
+  });
+}
+
+// Adds a wall along x with a door opening. (z fixed)
+function addWallX(z, x1, x2, openings = [], h = WALL_H) {
+  // openings: [{x: center, w: width}] all in [x1, x2]
+  const segs = [[x1, x2]];
+  openings.sort((a,b) => a.x - b.x).forEach(op => {
+    const a = op.x - op.w/2, b = op.x + op.w/2;
+    const out = [];
+    segs.forEach(([s,e]) => {
+      if (b <= s || a >= e) { out.push([s,e]); }
+      else {
+        if (a > s) out.push([s, a]);
+        if (b < e) out.push([b, e]);
+      }
+    });
+    segs.length = 0; segs.push(...out);
+  });
+  segs.forEach(([s,e]) => addWall(s, z, e, z, h));
+}
+
+function addWallZ(x, z1, z2, openings = [], h = WALL_H) {
+  const segs = [[z1, z2]];
+  openings.sort((a,b) => a.x - b.x).forEach(op => {
+    const a = op.x - op.w/2, b = op.x + op.w/2;
+    const out = [];
+    segs.forEach(([s,e]) => {
+      if (b <= s || a >= e) { out.push([s,e]); }
+      else {
+        if (a > s) out.push([s, a]);
+        if (b < e) out.push([b, e]);
+      }
+    });
+    segs.length = 0; segs.push(...out);
+  });
+  segs.forEach(([s,e]) => addWall(x, s, x, e, h));
+}
+
+// ----- Outer perimeter (front door at top, entrance hall side)
+addWallX(0,      0, UNIT_W, [{ x: 6.15, w: 1.0 }]); // top wall + entrance door
+addWallX(UNIT_D, 0, UNIT_W, []);                     // bottom wall
+addWallZ(0,      0, UNIT_D, []);                     // left wall
+addWallZ(UNIT_W, 0, UNIT_D, []);                     // right wall
+
+// ----- Balcony partitions (sliding-door openings to interior)
+addWallZ(1.5,  0,   UNIT_D, [
+  { x: 2.0, w: 1.6 },   // living ↔ left balcony
+  { x: 6.5, w: 1.6 },   // master ↔ left balcony
+]);
+addWallZ(10.2, 0,   2.7,    [{ x: 1.5, w: 1.0 }]);  // top bedroom ↔ top-right balcony
+addWallZ(11.1, 5.4, UNIT_D, [{ x: 7.0, w: 1.0 }]);  // bottom-right bedroom ↔ balcony
+
+// ----- Internal walls
+// Living ↔ master divider (with door near east end)
+addWallX(4.2, 1.5, 5.4, [{ x: 4.7, w: 0.9 }]);
+
+// Wall between living (west) and bath1+entrance (east): x=5.4, z=0..3.0
+// Door at z=2.4 connects entrance hall ↔ living room.
+addWallZ(5.4, 0, 3.0, [{ x: 2.4, w: 0.9 }]);
+
+// Open gap z=3.0..4.2 at x=5.4 (no wall) — L-shape connecting living to kitchen.
+
+// Master east wall (no door — master is entered from north via living)
+addWallZ(5.4, 4.2, UNIT_D, []);
+
+// Bath1 south wall — door from entrance porch
+addWallX(1.5, 5.4, 6.9, [{ x: 6.0, w: 0.7 }]);
+
+// Entrance south wall — door into kitchen/dining
+addWallX(3.0, 5.4, 6.9, [{ x: 6.15, w: 1.0 }]);
+
+// East wall of bath1+entrance / West wall of top bedroom
+addWallZ(6.9, 0, 3.0, []);
+
+// Top bedroom south wall — door from kitchen
+addWallX(2.7, 6.9, 10.2, [{ x: 8.5, w: 0.9 }]);
+// Top-right balcony south wall (kitchen side) — sealed
+addWallX(2.7, 10.2, UNIT_W, []);
+
+// Kitchen south boundary (split into 3 segments with doors):
+addWallX(5.4, 5.4, 7.8,  [{ x: 6.0, w: 0.7 }]);  // bath2 door
+addWallX(5.4, 7.8, 11.1, [{ x: 9.5, w: 0.9 }]);  // bottom-right bedroom door
+addWallX(5.4, 11.1, UNIT_W, []);                  // top wall of bottom-right balcony
+
+// Bath2 east wall (vs bottom-right bedroom)
+addWallZ(7.8, 5.4, UNIT_D, []);
+
+// Helper: door frame visual
+function addDoorFrame(x1, z1, x2, z2) {
+  // top lintel (visual only)
+  const dx = x2 - x1, dz = z2 - z1;
+  const len = Math.hypot(dx,dz);
+  let w, d;
+  if (Math.abs(dx) > Math.abs(dz)) { w = len; d = WALL_T; }
+  else { w = WALL_T; d = len; }
+  const lintel = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 0.6, d),
+    matWall
+  );
+  lintel.position.set(px((x1+x2)/2), 2.4, pz((z1+z2)/2));
+  scene.add(lintel);
+}
+
+// Add lintels for major doorways (visual continuity)
+addDoorFrame(5.65, 0,   6.65, 0);     // front door
+addDoorFrame(8.05, 2.7, 8.95, 2.7);   // top bedroom door
+addDoorFrame(9.05, 5.4, 9.95, 5.4);   // bottom-right bedroom door
+addDoorFrame(5.65, 5.4, 6.35, 5.4);   // bath2 door
+addDoorFrame(4.25, 4.2, 5.15, 4.2);   // master door
+addDoorFrame(5.4,  1.95, 5.4, 2.85);  // entrance ↔ living door
+addDoorFrame(5.65, 3.0, 6.65, 3.0);   // entrance ↔ kitchen
+addDoorFrame(5.65, 1.5, 6.35, 1.5);   // bath1 door
+
+// ----------------------------------------------------------------------------
+// Windows (visual: glass + sky beyond)
+// ----------------------------------------------------------------------------
+const matGlass = new THREE.MeshPhysicalMaterial({
+  color: 0xbfd9ec, transparent: true, opacity: 0.35,
+  roughness: 0.05, metalness: 0.0,
+  transmission: 0.6, thickness: 0.05
+});
+
+function addWindow(x1, z1, x2, z2, sillH = 0.9, top = 2.3) {
+  const dx = x2 - x1, dz = z2 - z1;
+  const len = Math.hypot(dx,dz);
+  let w, d;
+  if (Math.abs(dx) > Math.abs(dz)) { w = len; d = 0.06; }
+  else { w = 0.06; d = len; }
+  const g = new THREE.Mesh(
+    new THREE.BoxGeometry(w, top - sillH, d),
+    matGlass
+  );
+  g.position.set(px((x1+x2)/2), (top + sillH)/2, pz((z1+z2)/2));
+  scene.add(g);
+  // frame top + bottom (white)
+  const frameT = 0.06;
+  const fTop = new THREE.Mesh(new THREE.BoxGeometry(w, frameT, d*1.2), matWall);
+  fTop.position.set(px((x1+x2)/2), top, pz((z1+z2)/2));
+  scene.add(fTop);
+  const fBot = new THREE.Mesh(new THREE.BoxGeometry(w, frameT, d*1.2), matWall);
+  fBot.position.set(px((x1+x2)/2), sillH, pz((z1+z2)/2));
+  scene.add(fBot);
+}
+
+// Outer balcony walls have windows
+addWindow(0,    0.5, 0,    8.2);      // left balcony exterior
+addWindow(UNIT_W, 0.3, UNIT_W, 2.5);  // top-right balcony exterior
+addWindow(UNIT_W, 5.6, UNIT_W, 8.5);  // bottom-right balcony exterior
+
+// ----------------------------------------------------------------------------
+// Furniture (box-style)
+// ----------------------------------------------------------------------------
+function addBox(x, z, w, h, d, color, y0 = 0) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(px(x + w/2), y0 + h/2, pz(z + d/2));
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  // collision
+  wallSegments.push({
+    minX: m.position.x - w/2,
+    maxX: m.position.x + w/2,
+    minZ: m.position.z - d/2,
+    maxZ: m.position.z + d/2,
+  });
+  return m;
+}
+function addDecor(x, z, w, h, d, color, y0 = 0) {
+  // visual only (no collision), small items
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(px(x + w/2), y0 + h/2, pz(z + d/2));
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+
+// ----- LIVING ROOM (거실): x:1.5-5.4, z:0-4.5
+// Sofa along north wall facing south
+addBox(1.9, 0.25, 3.2, 0.45, 0.95, 0xd9d4c8);          // sofa base
+addDecor(1.9, 0.25, 3.2, 0.55, 0.25, 0xeeeae0, 0.45);  // back rest
+addDecor(1.9, 0.25, 0.25, 0.55, 0.95, 0xeeeae0, 0.45); // arm L
+addDecor(4.85, 0.25, 0.25, 0.55, 0.95, 0xeeeae0, 0.45);// arm R
+// Coffee table
+addBox(2.8, 1.6, 1.4, 0.4, 0.7, 0x6b4a2b);
+// Rug (decor only, very thin box just above floor)
+addDecor(1.9, 1.4, 3.2, 0.01, 1.8, 0x8a6f4a, 0.001);
+// TV stand (against living/master south wall at z=4.2)
+addBox(2.5, 3.85, 2.0, 0.4, 0.3, 0x222428);
+// TV (wall-mounted, just in front of the wall)
+addDecor(2.7, 4.10, 1.6, 0.7, 0.06, 0x0a0a0a, 0.7);
+
+// ----- KITCHEN/DINING (주방 및 식당): x:5.4-11.9, z:3.0-5.4
+// Kitchen counter along east wall
+addBox(11.4, 3.05, 0.5, 0.9, 1.7, 0xeeeeee);            // counter
+addDecor(11.35, 3.15, 0.55, 0.05, 1.55, 0x222222, 0.9); // counter top trim
+addDecor(11.45, 3.30, 0.40, 0.05, 0.55, 0x999fa3, 0.86);// sink
+addDecor(11.45, 3.95, 0.40, 0.04, 0.50, 0x111111, 0.91);// stove
+// Fridge (south end of east wall, against bath2/bedroom partition)
+addBox(11.2, 4.75, 0.7, 1.9, 0.55, 0xdddde0);
+// Dining table
+addBox(7.0, 3.95, 1.8, 0.75, 0.9, 0x7a5333);
+// Chairs (4)
+addBox(7.05, 3.50, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.85, 3.50, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.05, 4.90, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.85, 4.90, 0.4, 0.45, 0.4, 0x4a3320);
+
+// ----- MASTER BEDROOM (침실 SW): x:1.5-5.4, z:4.5-8.7
+// Bed
+addBox(2.5, 5.6, 2.0, 0.45, 1.6, 0xf2eee5);            // mattress base
+addDecor(2.5, 5.6, 2.0, 0.18, 0.2, 0xf6e2c8, 0.45);    // pillows row
+addDecor(2.5, 5.6, 2.0, 0.05, 1.4, 0xb9c7d3, 0.45);    // duvet
+addBox(2.5, 5.4, 2.0, 0.9, 0.18, 0x6b5238);            // headboard
+// Wardrobe
+addBox(1.55, 4.6, 0.5, 2.0, 1.6, 0xddc8a8);
+// Side table
+addBox(4.6, 5.7, 0.4, 0.45, 0.4, 0x6b4a2b);
+
+// ----- TOP-RIGHT BEDROOM (study/bedroom): x:6.9-10.2, z:0-2.7
+addBox(7.1, 0.4, 1.0, 0.4, 1.9, 0xf2eee5);             // bed
+addDecor(7.1, 0.4, 1.0, 0.6, 0.16, 0x735a40, 0.0);     // headboard
+addBox(8.5, 0.05, 1.4, 0.75, 0.55, 0x6b4a2b);          // desk
+addBox(9.5, 0.7, 0.4, 0.85, 0.45, 0x222222);           // chair
+
+// ----- BOTTOM-RIGHT BEDROOM: x:7.8-11.1, z:5.4-8.7
+addBox(8.1, 6.6, 1.4, 0.45, 1.9, 0xf2eee5);            // bed
+addDecor(8.1, 6.6, 1.4, 0.7, 0.16, 0x6b5238, 0.0);     // headboard
+addBox(10.4, 5.5, 0.6, 2.0, 1.4, 0xddc8a8);            // wardrobe (against east balcony partition)
+
+// ----- BATHROOMS
+// Bath1: x:5.4-6.9, z:0-1.5
+addBox(5.45, 0.1, 0.45, 0.4, 0.55, 0xffffff);          // toilet
+addBox(6.25, 1.05, 0.6, 0.85, 0.4, 0xeeeeee);          // vanity
+// Bath2: x:5.4-7.8, z:5.4-8.7
+addBox(5.45, 7.95, 1.6, 0.5, 0.7, 0xffffff);           // bathtub (against south wall)
+addBox(7.20, 8.20, 0.5, 0.4, 0.4, 0xffffff);           // toilet
+addBox(5.45, 5.55, 0.9, 0.85, 0.4, 0xeeeeee);          // vanity
+
+// ----- BALCONY items
+addBox(0.4, 4.5, 0.5, 0.7, 0.4, 0xb7b6b1);             // washer-ish on left balcony
+addBox(0.4, 5.0, 0.5, 0.7, 0.4, 0xc9c8c2);
+
+// ----------------------------------------------------------------------------
+// Player / Controls
+// ----------------------------------------------------------------------------
+const player = {
+  speed: 3.2,
+  vx: 0, vz: 0,
+  yaw: yawObject.rotation.y,
+  pitch: 0,
+  radius: 0.3,
+};
+
+const keys = { w: false, a: false, s: false, d: false };
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.w = true;
+  if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.s = true;
+  if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.a = true;
+  if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.d = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.w = false;
+  if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.s = false;
+  if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.a = false;
+  if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.d = false;
+});
+
+// Pointer lock for desktop
+let pointerLocked = false;
+renderer.domElement.addEventListener('click', () => {
+  if (!isTouch) renderer.domElement.requestPointerLock?.();
+});
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === renderer.domElement;
+});
+document.addEventListener('mousemove', (e) => {
+  if (!pointerLocked) return;
+  player.yaw   -= e.movementX * 0.0025;
+  player.pitch -= e.movementY * 0.0025;
+  player.pitch = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
+});
+
+// ----------------------------------------------------------------------------
+// Touch controls: joystick + look pad
+// ----------------------------------------------------------------------------
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const joystick = document.getElementById('joystick');
+const stick = joystick.querySelector('.stick');
+const lookPad = document.getElementById('look-pad');
+if (isTouch) { joystick.classList.add('visible'); lookPad.classList.add('visible'); }
+
+let joyActive = false, joyId = null, joyCx = 0, joyCy = 0;
+const joyMax = 50;
+const joyVec = { x: 0, y: 0 };
+
+joystick.addEventListener('touchstart', (e) => {
+  const t = e.changedTouches[0];
+  const r = joystick.getBoundingClientRect();
+  joyCx = r.left + r.width/2;
+  joyCy = r.top + r.height/2;
+  joyId = t.identifier;
+  joyActive = true;
+  e.preventDefault();
+}, { passive: false });
+joystick.addEventListener('touchmove', (e) => {
+  if (!joyActive) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== joyId) continue;
+    let dx = t.clientX - joyCx;
+    let dy = t.clientY - joyCy;
+    const len = Math.hypot(dx, dy);
+    if (len > joyMax) { dx *= joyMax/len; dy *= joyMax/len; }
+    stick.style.transform = `translate(${dx}px, ${dy}px)`;
+    joyVec.x = dx / joyMax;
+    joyVec.y = dy / joyMax;
+  }
+  e.preventDefault();
+}, { passive: false });
+function joyEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joyId) {
+      joyActive = false; joyId = null;
+      joyVec.x = 0; joyVec.y = 0;
+      stick.style.transform = 'translate(0px, 0px)';
+    }
+  }
+}
+joystick.addEventListener('touchend', joyEnd);
+joystick.addEventListener('touchcancel', joyEnd);
+
+// look pad: drag to rotate camera
+let lookId = null, lookLastX = 0, lookLastY = 0;
+lookPad.addEventListener('touchstart', (e) => {
+  const t = e.changedTouches[0];
+  lookId = t.identifier;
+  lookLastX = t.clientX; lookLastY = t.clientY;
+  e.preventDefault();
+}, { passive: false });
+lookPad.addEventListener('touchmove', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier !== lookId) continue;
+    const dx = t.clientX - lookLastX;
+    const dy = t.clientY - lookLastY;
+    lookLastX = t.clientX; lookLastY = t.clientY;
+    player.yaw   -= dx * 0.005;
+    player.pitch -= dy * 0.005;
+    player.pitch = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
+  }
+  e.preventDefault();
+}, { passive: false });
+function lookEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === lookId) lookId = null;
+  }
+}
+lookPad.addEventListener('touchend', lookEnd);
+lookPad.addEventListener('touchcancel', lookEnd);
+
+// ----------------------------------------------------------------------------
+// Collision (AABB vs circle)
+// ----------------------------------------------------------------------------
+function tryMove(nx, nz) {
+  const r = player.radius;
+  for (const w of wallSegments) {
+    const cx = Math.max(w.minX, Math.min(nx, w.maxX));
+    const cz = Math.max(w.minZ, Math.min(nz, w.maxZ));
+    const dx = nx - cx, dz = nz - cz;
+    if (dx*dx + dz*dz < r*r) return false;
+  }
+  // also keep within outer bounds (just in case)
+  if (nx < -UNIT_W/2 + r || nx > UNIT_W/2 - r) return false;
+  if (nz < -UNIT_D/2 + r || nz > UNIT_D/2 - r) return false;
+  return true;
+}
+
+// ----------------------------------------------------------------------------
+// Room labeling (which room am I in?)
+// ----------------------------------------------------------------------------
+const ROOMS = [
+  { name: '거실',          x1:1.5,  z1:0.0, x2:5.4,  z2:4.2 },
+  { name: '주방·식당',     x1:5.4,  z1:3.0, x2:11.9, z2:5.4 },
+  { name: '안방',          x1:1.5,  z1:4.2, x2:5.4,  z2:8.7 },
+  { name: '침실 (서재)',   x1:6.9,  z1:0.0, x2:10.2, z2:2.7 },
+  { name: '침실',          x1:7.8,  z1:5.4, x2:11.1, z2:8.7 },
+  { name: '화장실 1',      x1:5.4,  z1:0.0, x2:6.9,  z2:1.5 },
+  { name: '화장실 2',      x1:5.4,  z1:5.4, x2:7.8,  z2:8.7 },
+  { name: '현관',          x1:5.4,  z1:1.5, x2:6.9,  z2:3.0 },
+  { name: '발코니 (좌)',    x1:0.0,  z1:0.0, x2:1.5,  z2:8.7 },
+  { name: '발코니 (우상)',   x1:10.2, z1:0.0, x2:11.9, z2:2.7 },
+  { name: '발코니 (우하)',   x1:11.1, z1:5.4, x2:11.9, z2:8.7 },
+];
+const roomLabelEl = document.getElementById('room-label');
+function updateRoomLabel() {
+  // convert world to floor coords (px is mirrored, so undo the mirror here)
+  const fx = UNIT_W - (yawObject.position.x - OX);
+  const fz = yawObject.position.z - OZ;
+  for (const r of ROOMS) {
+    if (fx >= r.x1 && fx <= r.x2 && fz >= r.z1 && fz <= r.z2) {
+      if (roomLabelEl.textContent !== r.name) roomLabelEl.textContent = r.name;
+      return;
+    }
+  }
+  roomLabelEl.textContent = '복도';
+}
+
+// ----------------------------------------------------------------------------
+// Loop
+// ----------------------------------------------------------------------------
+const clock = new THREE.Clock();
+
+function animate() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // Movement input
+  let mx = 0, mz = 0;
+  if (keys.w) mz -= 1;
+  if (keys.s) mz += 1;
+  if (keys.a) mx -= 1;
+  if (keys.d) mx += 1;
+  // joystick: y is up-negative; map x->strafe, y->forward (up=forward)
+  if (joyActive || joyVec.x !== 0 || joyVec.y !== 0) {
+    mx += joyVec.x;
+    mz += joyVec.y;
+  }
+  const len = Math.hypot(mx, mz);
+  if (len > 0) { mx /= len; mz /= len; }
+
+  // Rotate by yaw
+  const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+  // forward in -z direction with yaw=0; here yawObject.rotation.y rotates y axis
+  // local forward: (sin, 0, cos)? Use camera direction:
+  const forwardX =  Math.sin(player.yaw);
+  const forwardZ =  Math.cos(player.yaw);
+  // Three.js: yawObject default forward is -Z. After rotation y=θ:
+  // forward direction = (-sin θ, 0, -cos θ). Strafe = perpendicular = (-cos θ, 0, sin θ)
+  const fX = -Math.sin(player.yaw), fZ = -Math.cos(player.yaw);
+  const sX =  Math.cos(player.yaw), sZ = -Math.sin(player.yaw);
+
+  const wishX = (fX * (-mz) + sX * mx) * player.speed * dt;
+  const wishZ = (fZ * (-mz) + sZ * mx) * player.speed * dt;
+
+  // Try move with axis separation for sliding
+  const cur = yawObject.position;
+  let nx = cur.x + wishX;
+  let nz = cur.z + wishZ;
+  if (!tryMove(nx, cur.z)) nx = cur.x;
+  if (!tryMove(nx, nz))    nz = cur.z;
+  cur.x = nx;
+  cur.z = nz;
+
+  yawObject.rotation.y = player.yaw;
+  pitchObject.rotation.x = player.pitch;
+
+  updateRoomLabel();
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+// ----------------------------------------------------------------------------
+// Resize + start overlay
+// ----------------------------------------------------------------------------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+const overlay = document.getElementById('start-overlay');
+function dismissOverlay() {
+  overlay.style.display = 'none';
+  if (!isTouch) renderer.domElement.requestPointerLock?.();
+}
+overlay.addEventListener('click', dismissOverlay);
+overlay.addEventListener('touchend', (e) => { dismissOverlay(); e.preventDefault(); }, { passive: false });
+
+</script>
+</body>
+</html>
