@@ -363,15 +363,15 @@ function addTileFloor(x, z, w, d, mat = matTile) {
   scene.add(m);
 }
 // bathroom 1 (top middle)
-addTileFloor(5.4, 0.0, 1.8, 1.5);
+addTileFloor(5.4, 0.0, 1.5, 1.5);
 // bathroom 2 (bottom middle)
-addTileFloor(5.4, 6.6, 2.4, 2.1);
+addTileFloor(5.4, 5.4, 2.4, 3.3);
 // entrance porch
-addTileFloor(5.4, 1.5, 1.8, 1.5);
+addTileFloor(5.4, 1.5, 1.5, 1.5);
 // balconies
 addTileFloor(0.0, 0.0, 1.5, UNIT_D, matBalcon);    // left full balcony
-addTileFloor(10.4, 0.0, 1.5, 2.7, matBalcon);      // top-right balcony
-addTileFloor(10.4, 6.6, 1.5, 2.1, matBalcon);      // bottom-right balcony
+addTileFloor(10.2, 0.0, 1.7, 2.7, matBalcon);      // top-right balcony
+addTileFloor(11.1, 5.4, 0.8, 3.3, matBalcon);      // bottom-right balcony
 
 // ----------------------------------------------------------------------------
 // Walls
@@ -440,69 +440,54 @@ function addWallZ(x, z1, z2, openings = [], h = WALL_H) {
   segs.forEach(([s,e]) => addWall(x, s, x, e, h));
 }
 
-// Outer perimeter (with main entrance opening on top wall at entrance area)
-addWallX(0,      0, UNIT_W, [{ x: 6.3, w: 1.0 }]); // top wall with entrance door
-addWallX(UNIT_D, 0, UNIT_W, []);                    // bottom wall
-addWallZ(0,      0, UNIT_D, []);                    // left wall (balcony outer)
-addWallZ(UNIT_W, 0, UNIT_D, []);                    // right wall
+// ----- Outer perimeter (front door at top, entrance hall side)
+addWallX(0,      0, UNIT_W, [{ x: 6.15, w: 1.0 }]); // top wall + entrance door
+addWallX(UNIT_D, 0, UNIT_W, []);                     // bottom wall
+addWallZ(0,      0, UNIT_D, []);                     // left wall
+addWallZ(UNIT_W, 0, UNIT_D, []);                     // right wall
 
-// Balcony partition (sliding door area) — left balcony to interior
-addWallZ(1.5, 0, UNIT_D, [
-  { x: 2.0, w: 1.6 }, // living-balcony slider
-  { x: 6.3, w: 1.6 }, // master-balcony slider
+// ----- Balcony partitions (sliding-door openings to interior)
+addWallZ(1.5,  0,   UNIT_D, [
+  { x: 2.0, w: 1.6 },   // living ↔ left balcony
+  { x: 6.5, w: 1.6 },   // master ↔ left balcony
 ]);
+addWallZ(10.2, 0,   2.7,    [{ x: 1.5, w: 1.0 }]);  // top bedroom ↔ top-right balcony
+addWallZ(11.1, 5.4, UNIT_D, [{ x: 7.0, w: 1.0 }]);  // bottom-right bedroom ↔ balcony
 
-// Right side balcony partitions
-addWallZ(10.4, 0, 2.7, [{ x: 1.4, w: 1.0 }]);    // top-right small balcony slider
-addWallZ(10.4, 6.6, UNIT_D, [{ x: 7.6, w: 1.0 }]); // bottom-right balcony slider
+// ----- Internal walls
+// Living ↔ master divider (with door near east end)
+addWallX(4.2, 1.5, 5.4, [{ x: 4.7, w: 0.9 }]);
 
-// Internal walls
-// Living room divider (between living and kitchen): partial wall at z=4.5 from x=1.5 to x=5.4
-addWallX(4.5, 1.5, 5.4, []);
-// Wall between living/kitchen and rooms below — from x=5.4 vertical
-addWallZ(5.4, 0, 6.6, [
-  { x: 1.5, w: 0.9 },   // bath1 door
-  { x: 2.4, w: 0.9 },   // entrance door
-  { x: 4.5, w: 1.4 },   // pass-through to kitchen from living
-]);
-// Top bedroom walls
-addWallX(2.7, 7.2, 10.4, [{ x: 8.6, w: 0.9 }]);   // top bedroom south wall + door
-addWallZ(7.2, 0,   2.7, []);                       // top bedroom west wall
-// Bath 1 east wall
-addWallZ(7.2, 0, 1.5, []);
-// Entrance corridor walls
-addWallX(1.5, 5.4, 7.2, []);                       // bath1/entrance separator
-addWallX(3.0, 5.4, 7.2, [{ x: 6.3, w: 1.0 }]);     // entrance interior wall
+// Wall between living (west) and bath1+entrance (east): x=5.4, z=0..3.0
+// Door at z=2.4 connects entrance hall ↔ living room.
+addWallZ(5.4, 0, 3.0, [{ x: 2.4, w: 0.9 }]);
 
-// Master bedroom divider
-addWallX(4.5, 0, 5.4, []);                         // master top wall (overlaps living south, harmless)
-// Master bedroom east wall
-addWallZ(5.4, 6.6, UNIT_D, [{ x: 7.4, w: 0.9 }]);  // door from master? (actually door is on top side)
-// Master bedroom door — replace south of living wall: open 0.9 at x=2.0
-// Already covered by addWallX(4.5,1.5,5.4) — let's add an opening:
-//  Re-do: remove previous and add with door
-// (We won't deduplicate; the engine will just place two walls — but to add a door
-//  we instead override that wall with an opening version and skip earlier.)
-// To fix collision, we already pushed full wall — add the door by NOT redoing.
-// Simpler approach: redefine with opening below by clearing the old.
-// Since we can't easily remove from arrays, we just leave living/master separated
-// and provide entry via the entrance corridor through a door in central wall.
-// Actually master bedroom enters through the corridor area — let's add a door
-// at top corner. Instead, modify earlier wall:
-// (For simplicity, the player can route via main corridor.)
+// Open gap z=3.0..4.2 at x=5.4 (no wall) — L-shape connecting living to kitchen.
 
-// Bottom-right bedroom
-addWallX(6.6, 5.4, 10.4, []);                      // shared south wall of kitchen
-addWallZ(7.8, 6.6, UNIT_D, [{ x: 8.0, w: 0.9 }]);  // bath2 east + door
-// Door from bottom-right bedroom into kitchen/dining
-// Re-add corner wall with opening — split the long south wall at x range 7.8-10.4
-// Replace existing addWallX(6.6,5.4,10.4) — too late. Let's accept and just
-// add the door visually with a duplicate frame.
-// Simplification: keep the layout traversable from the entrance corridor only
-// for living + kitchen + 3 bedrooms via main corridor.
+// Master east wall (no door — master is entered from north via living)
+addWallZ(5.4, 4.2, UNIT_D, []);
 
-// Bath2 walls
-addWallX(8.7-2.1, 5.4, 7.8, [{ x: 6.0, w: 0.8 }]); // already same as 6.6 above
+// Bath1 south wall — door from entrance porch
+addWallX(1.5, 5.4, 6.9, [{ x: 6.0, w: 0.7 }]);
+
+// Entrance south wall — door into kitchen/dining
+addWallX(3.0, 5.4, 6.9, [{ x: 6.15, w: 1.0 }]);
+
+// East wall of bath1+entrance / West wall of top bedroom
+addWallZ(6.9, 0, 3.0, []);
+
+// Top bedroom south wall — door from kitchen
+addWallX(2.7, 6.9, 10.2, [{ x: 8.5, w: 0.9 }]);
+// Top-right balcony south wall (kitchen side) — sealed
+addWallX(2.7, 10.2, UNIT_W, []);
+
+// Kitchen south boundary (split into 3 segments with doors):
+addWallX(5.4, 5.4, 7.8,  [{ x: 6.0, w: 0.7 }]);  // bath2 door
+addWallX(5.4, 7.8, 11.1, [{ x: 9.5, w: 0.9 }]);  // bottom-right bedroom door
+addWallX(5.4, 11.1, UNIT_W, []);                  // top wall of bottom-right balcony
+
+// Bath2 east wall (vs bottom-right bedroom)
+addWallZ(7.8, 5.4, UNIT_D, []);
 
 // Helper: door frame visual
 function addDoorFrame(x1, z1, x2, z2) {
@@ -521,9 +506,14 @@ function addDoorFrame(x1, z1, x2, z2) {
 }
 
 // Add lintels for major doorways (visual continuity)
-addDoorFrame(5.8, 0, 6.8, 0);                  // entrance
-addDoorFrame(8.15, 2.7, 9.05, 2.7);            // top bedroom door
-addDoorFrame(7.0, 6.6, 7.9, 6.6);              // bottom-right bed door
+addDoorFrame(5.65, 0,   6.65, 0);     // front door
+addDoorFrame(8.05, 2.7, 8.95, 2.7);   // top bedroom door
+addDoorFrame(9.05, 5.4, 9.95, 5.4);   // bottom-right bedroom door
+addDoorFrame(5.65, 5.4, 6.35, 5.4);   // bath2 door
+addDoorFrame(4.25, 4.2, 5.15, 4.2);   // master door
+addDoorFrame(5.4,  1.95, 5.4, 2.85);  // entrance ↔ living door
+addDoorFrame(5.65, 3.0, 6.65, 3.0);   // entrance ↔ kitchen
+addDoorFrame(5.65, 1.5, 6.35, 1.5);   // bath1 door
 
 // ----------------------------------------------------------------------------
 // Windows (visual: glass + sky beyond)
@@ -557,9 +547,9 @@ function addWindow(x1, z1, x2, z2, sillH = 0.9, top = 2.3) {
 }
 
 // Outer balcony walls have windows
-addWindow(0, 0.5, 0, 8.2);            // left balcony exterior windows
-addWindow(11.9, 0.3, 11.9, 2.5);      // right side window top bedroom balc
-addWindow(11.9, 6.8, 11.9, 8.5);      // right side window bottom-right bedroom balc
+addWindow(0,    0.5, 0,    8.2);      // left balcony exterior
+addWindow(UNIT_W, 0.3, UNIT_W, 2.5);  // top-right balcony exterior
+addWindow(UNIT_W, 5.6, UNIT_W, 8.5);  // bottom-right balcony exterior
 
 // ----------------------------------------------------------------------------
 // Furniture (box-style)
@@ -599,28 +589,26 @@ addDecor(4.85, 0.25, 0.25, 0.55, 0.95, 0xeeeae0, 0.45);// arm R
 addBox(2.8, 1.6, 1.4, 0.4, 0.7, 0x6b4a2b);
 // Rug (decor only, very thin box just above floor)
 addDecor(1.9, 1.4, 3.2, 0.01, 1.8, 0x8a6f4a, 0.001);
-// TV stand
-addBox(2.5, 4.15, 2.0, 0.4, 0.3, 0x222428);
-// TV (mounted)
-addDecor(2.7, 4.4, 1.6, 0.7, 0.06, 0x0a0a0a, 0.7);
+// TV stand (against living/master south wall at z=4.2)
+addBox(2.5, 3.85, 2.0, 0.4, 0.3, 0x222428);
+// TV (wall-mounted, just in front of the wall)
+addDecor(2.7, 4.10, 1.6, 0.7, 0.06, 0x0a0a0a, 0.7);
 
-// ----- KITCHEN/DINING (주방 및 식당): x:5.4-10.4, z:3.0-6.6
-// Kitchen counter along east wall (running north-south)
-addBox(9.9, 3.1, 0.5, 0.9, 3.4, 0xeeeeee);             // counter
-addDecor(9.85, 3.2, 0.55, 0.05, 3.2, 0x222222, 0.9);   // counter top trim
-// Sink (dark inset)
-addDecor(9.95, 3.4, 0.4, 0.05, 0.6, 0x999fa3, 0.86);
-// Stove
-addDecor(9.95, 4.6, 0.4, 0.04, 0.55, 0x111111, 0.91);
-// Fridge
-addBox(9.55, 6.0, 0.6, 1.9, 0.6, 0xdddde0);
+// ----- KITCHEN/DINING (주방 및 식당): x:5.4-11.9, z:3.0-5.4
+// Kitchen counter along east wall
+addBox(11.4, 3.05, 0.5, 0.9, 1.7, 0xeeeeee);            // counter
+addDecor(11.35, 3.15, 0.55, 0.05, 1.55, 0x222222, 0.9); // counter top trim
+addDecor(11.45, 3.30, 0.40, 0.05, 0.55, 0x999fa3, 0.86);// sink
+addDecor(11.45, 3.95, 0.40, 0.04, 0.50, 0x111111, 0.91);// stove
+// Fridge (south end of east wall, against bath2/bedroom partition)
+addBox(11.2, 4.75, 0.7, 1.9, 0.55, 0xdddde0);
 // Dining table
-addBox(7.0, 4.4, 1.8, 0.75, 0.9, 0x7a5333);
+addBox(7.0, 3.95, 1.8, 0.75, 0.9, 0x7a5333);
 // Chairs (4)
-addBox(7.05, 4.05, 0.4, 0.45, 0.4, 0x4a3320);
-addBox(7.85, 4.05, 0.4, 0.45, 0.4, 0x4a3320);
-addBox(7.05, 5.25, 0.4, 0.45, 0.4, 0x4a3320);
-addBox(7.85, 5.25, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.05, 3.50, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.85, 3.50, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.05, 4.90, 0.4, 0.45, 0.4, 0x4a3320);
+addBox(7.85, 4.90, 0.4, 0.45, 0.4, 0x4a3320);
 
 // ----- MASTER BEDROOM (침실 SW): x:1.5-5.4, z:4.5-8.7
 // Bed
@@ -633,27 +621,25 @@ addBox(1.55, 4.6, 0.5, 2.0, 1.6, 0xddc8a8);
 // Side table
 addBox(4.6, 5.7, 0.4, 0.45, 0.4, 0x6b4a2b);
 
-// ----- TOP-RIGHT BEDROOM (study/bedroom): x:7.2-10.4, z:0-2.7
-// Single bed
-addBox(7.4, 0.4, 1.0, 0.4, 1.9, 0xf2eee5);
-addDecor(7.4, 0.4, 1.0, 0.6, 0.16, 0x735a40, 0.0);     // headboard
-// Desk (study)
-addBox(8.7, 0.05, 1.4, 0.75, 0.55, 0x6b4a2b);
-addBox(9.9, 0.7, 0.4, 0.85, 0.45, 0x222);              // chair
+// ----- TOP-RIGHT BEDROOM (study/bedroom): x:6.9-10.2, z:0-2.7
+addBox(7.1, 0.4, 1.0, 0.4, 1.9, 0xf2eee5);             // bed
+addDecor(7.1, 0.4, 1.0, 0.6, 0.16, 0x735a40, 0.0);     // headboard
+addBox(8.5, 0.05, 1.4, 0.75, 0.55, 0x6b4a2b);          // desk
+addBox(9.5, 0.7, 0.4, 0.85, 0.45, 0x222222);           // chair
 
-// ----- BOTTOM-RIGHT BEDROOM: x:7.8-10.4, z:6.6-8.7
-addBox(8.0, 7.6, 1.4, 0.45, 1.9, 0xf2eee5);            // bed
-addDecor(8.0, 7.6, 1.4, 0.7, 0.16, 0x6b5238, 0.0);     // headboard
-addBox(9.6, 6.7, 0.7, 0.9, 0.45, 0xddc8a8);            // small wardrobe / desk
+// ----- BOTTOM-RIGHT BEDROOM: x:7.8-11.1, z:5.4-8.7
+addBox(8.1, 6.6, 1.4, 0.45, 1.9, 0xf2eee5);            // bed
+addDecor(8.1, 6.6, 1.4, 0.7, 0.16, 0x6b5238, 0.0);     // headboard
+addBox(10.4, 5.5, 0.6, 2.0, 1.4, 0xddc8a8);            // wardrobe (against east balcony partition)
 
 // ----- BATHROOMS
-// Bath1: x:5.4-7.2, z:0-1.5  (toilet, sink)
-addBox(5.5, 0.1, 0.5, 0.4, 0.55, 0xffffff);            // toilet
-addBox(6.3, 1.05, 0.7, 0.85, 0.4, 0xeeeeee);           // vanity
-// Bath2: x:5.4-7.8, z:6.6-8.7 (tub, sink, toilet)
-addBox(5.5, 7.6, 1.6, 0.5, 0.7, 0xffffff);             // bathtub
-addBox(7.0, 8.2, 0.5, 0.4, 0.4, 0xffffff);             // toilet
-addBox(5.5, 6.7, 0.9, 0.85, 0.4, 0xeeeeee);            // vanity
+// Bath1: x:5.4-6.9, z:0-1.5
+addBox(5.45, 0.1, 0.45, 0.4, 0.55, 0xffffff);          // toilet
+addBox(6.25, 1.05, 0.6, 0.85, 0.4, 0xeeeeee);          // vanity
+// Bath2: x:5.4-7.8, z:5.4-8.7
+addBox(5.45, 7.95, 1.6, 0.5, 0.7, 0xffffff);           // bathtub (against south wall)
+addBox(7.20, 8.20, 0.5, 0.4, 0.4, 0xffffff);           // toilet
+addBox(5.45, 5.55, 0.9, 0.85, 0.4, 0xeeeeee);          // vanity
 
 // ----- BALCONY items
 addBox(0.4, 4.5, 0.5, 0.7, 0.4, 0xb7b6b1);             // washer-ish on left balcony
@@ -797,17 +783,17 @@ function tryMove(nx, nz) {
 // Room labeling (which room am I in?)
 // ----------------------------------------------------------------------------
 const ROOMS = [
-  { name: '거실',          x1:1.5, z1:0.0, x2:5.4, z2:4.5 },
-  { name: '주방·식당',     x1:5.4, z1:3.0, x2:10.4, z2:6.6 },
-  { name: '안방',          x1:1.5, z1:4.5, x2:5.4, z2:8.7 },
-  { name: '침실 (서재)',   x1:7.2, z1:0.0, x2:10.4, z2:2.7 },
-  { name: '침실',          x1:7.8, z1:6.6, x2:10.4, z2:8.7 },
-  { name: '화장실 1',      x1:5.4, z1:0.0, x2:7.2, z2:1.5 },
-  { name: '화장실 2',      x1:5.4, z1:6.6, x2:7.8, z2:8.7 },
-  { name: '현관',          x1:5.4, z1:1.5, x2:7.2, z2:3.0 },
-  { name: '발코니 (좌)',    x1:0.0, z1:0.0, x2:1.5, z2:8.7 },
-  { name: '발코니 (우상)',   x1:10.4, z1:0.0, x2:11.9, z2:2.7 },
-  { name: '발코니 (우하)',   x1:10.4, z1:6.6, x2:11.9, z2:8.7 },
+  { name: '거실',          x1:1.5,  z1:0.0, x2:5.4,  z2:4.2 },
+  { name: '주방·식당',     x1:5.4,  z1:3.0, x2:11.9, z2:5.4 },
+  { name: '안방',          x1:1.5,  z1:4.2, x2:5.4,  z2:8.7 },
+  { name: '침실 (서재)',   x1:6.9,  z1:0.0, x2:10.2, z2:2.7 },
+  { name: '침실',          x1:7.8,  z1:5.4, x2:11.1, z2:8.7 },
+  { name: '화장실 1',      x1:5.4,  z1:0.0, x2:6.9,  z2:1.5 },
+  { name: '화장실 2',      x1:5.4,  z1:5.4, x2:7.8,  z2:8.7 },
+  { name: '현관',          x1:5.4,  z1:1.5, x2:6.9,  z2:3.0 },
+  { name: '발코니 (좌)',    x1:0.0,  z1:0.0, x2:1.5,  z2:8.7 },
+  { name: '발코니 (우상)',   x1:10.2, z1:0.0, x2:11.9, z2:2.7 },
+  { name: '발코니 (우하)',   x1:11.1, z1:5.4, x2:11.9, z2:8.7 },
 ];
 const roomLabelEl = document.getElementById('room-label');
 function updateRoomLabel() {
